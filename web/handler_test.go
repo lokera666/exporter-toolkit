@@ -15,16 +15,17 @@ package web
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"sync"
 	"testing"
+	"time"
 )
 
 // TestBasicAuthCache validates that the cache is working by calling a password
 // protected endpoint multiple times.
 func TestBasicAuthCache(t *testing.T) {
 	server := &http.Server{
-		Addr: port,
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Write([]byte("Hello World!"))
 		}),
@@ -39,9 +40,16 @@ func TestBasicAuthCache(t *testing.T) {
 	})
 
 	go func() {
-		ListenAndServe(server, "testdata/web_config_users_noTLS.good.yml", testlogger)
+		flags := FlagConfig{
+			WebListenAddresses: &([]string{port}),
+			WebSystemdSocket:   OfBool(false),
+			WebConfigFile:      OfString("testdata/web_config_users_noTLS.good.yml"),
+		}
+		ListenAndServe(server, &flags, testlogger)
 		close(done)
 	}()
+
+	waitForPort(t, port)
 
 	login := func(username, password string, code int) {
 		client := &http.Client{}
@@ -88,7 +96,6 @@ func TestBasicAuthCache(t *testing.T) {
 // to prevent user enumeration.
 func TestBasicAuthWithFakepassword(t *testing.T) {
 	server := &http.Server{
-		Addr: port,
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Write([]byte("Hello World!"))
 		}),
@@ -103,9 +110,16 @@ func TestBasicAuthWithFakepassword(t *testing.T) {
 	})
 
 	go func() {
-		ListenAndServe(server, "testdata/web_config_users_noTLS.good.yml", testlogger)
+		flags := FlagConfig{
+			WebListenAddresses: &([]string{port}),
+			WebSystemdSocket:   OfBool(false),
+			WebConfigFile:      OfString("testdata/web_config_users_noTLS.good.yml"),
+		}
+		ListenAndServe(server, &flags, testlogger)
 		close(done)
 	}()
+
+	waitForPort(t, port)
 
 	login := func() {
 		client := &http.Client{}
@@ -129,10 +143,9 @@ func TestBasicAuthWithFakepassword(t *testing.T) {
 	login()
 }
 
-// TestHTTPHeaders validates that HTTP headers are added correctly.
-func TestHTTPHeaders(t *testing.T) {
+// TestByPassBasicAuthVuln tests for CVE-2022-46146.
+func TestByPassBasicAuthVuln(t *testing.T) {
 	server := &http.Server{
-		Addr: port,
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Write([]byte("Hello World!"))
 		}),
@@ -147,9 +160,66 @@ func TestHTTPHeaders(t *testing.T) {
 	})
 
 	go func() {
-		ListenAndServe(server, "testdata/web_config_headers.good.yml", testlogger)
+		flags := FlagConfig{
+			WebListenAddresses: &([]string{port}),
+			WebSystemdSocket:   OfBool(false),
+			WebConfigFile:      OfString("testdata/web_config_users_noTLS.good.yml"),
+		}
+		ListenAndServe(server, &flags, testlogger)
 		close(done)
 	}()
+
+	waitForPort(t, port)
+
+	login := func(username, password string) {
+		client := &http.Client{}
+		req, err := http.NewRequest("GET", "http://localhost"+port, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.SetBasicAuth(username, password)
+		r, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if r.StatusCode != 401 {
+			t.Fatalf("bad return code, expected %d, got %d", 401, r.StatusCode)
+		}
+	}
+
+	// Poison the cache.
+	login("alice$2y$12$1DpfPeqF9HzHJt.EWswy1exHluGfbhnn3yXhR7Xes6m3WJqFg0Wby", "fakepassword")
+	// Login with a wrong password.
+	login("alice", "$2y$10$QOauhQNbBCuQDKes6eFzPeMqBSjb7Mr5DUmpZ/VcEd00UAV/LDeSifakepassword")
+}
+
+// TestHTTPHeaders validates that HTTP headers are added correctly.
+func TestHTTPHeaders(t *testing.T) {
+	server := &http.Server{
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Write([]byte("Hello World!"))
+		}),
+	}
+
+	done := make(chan struct{})
+	t.Cleanup(func() {
+		if err := server.Shutdown(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		<-done
+	})
+
+	go func() {
+		flags := FlagConfig{
+			WebListenAddresses: &([]string{port}),
+			WebSystemdSocket:   OfBool(false),
+			WebConfigFile:      OfString("testdata/web_config_headers.good.yml"),
+		}
+		ListenAndServe(server, &flags, testlogger)
+		close(done)
+	}()
+
+	waitForPort(t, port)
 
 	client := &http.Client{}
 	req, err := http.NewRequest("GET", "http://localhost"+port, nil)
@@ -170,5 +240,21 @@ func TestHTTPHeaders(t *testing.T) {
 		if got := r.Header.Get(k); got != v {
 			t.Fatalf("unexpected %s header value, expected %q, got %q", k, v, got)
 		}
+	}
+}
+
+func waitForPort(t *testing.T, addr string) {
+	start := time.Now()
+	for {
+		conn, err := net.DialTimeout("tcp", addr, time.Second)
+		if err == nil {
+			conn.Close()
+			return
+		}
+		if time.Since(start) >= 5*time.Second {
+			t.Fatalf("timeout waiting for port %s: %s", addr, err)
+			return
+		}
+		time.Sleep(time.Millisecond * 100)
 	}
 }

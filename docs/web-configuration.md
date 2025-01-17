@@ -23,6 +23,24 @@ Generic placeholders are defined as follows:
 
 ```
 tls_server_config:
+  # Certificate for server to use to authenticate to client.
+  # Expected to be passed as a PEM encoded sequence of bytes as a string.
+  #
+  # NOTE: If passing the cert inline, cert_file should not be specified below.
+  [ cert: <string> ]
+
+  # Key for server to use to authenticate to client.
+  # Expected to be passed as a PEM encoded sequence of bytes as a string.
+  #
+  # NOTE: If passing the key inline, key_file should not be specified below.
+  [ key: <secret> ]
+
+  # CA certificate for client certificate authentication to the server.
+  # Expected to be passed as a PEM encoded sequence of bytes as a string.
+  #
+  # NOTE: If passing the client_ca inline, client_ca_file should not be specified below.
+  [ client_ca: <string> ]
+
   # Certificate and key files for server to use to authenticate to client.
   cert_file: <filename>
   key_file: <filename>
@@ -38,6 +56,13 @@ tls_server_config:
   # CA certificate for client certificate authentication to the server.
   [ client_ca_file: <filename> ]
 
+  # Verify that the client certificate has a Subject Alternate Name (SAN)
+  # which is an exact match to an entry in this list, else terminate the
+  # connection. SAN match can be one or multiple of the following: DNS,
+  # IP, e-mail, or URI address from https://pkg.go.dev/crypto/x509#Certificate.
+  [ client_allowed_sans:
+    [ - <string> ] ]
+
   # Minimum TLS version that is acceptable.
   [ min_version: <string> | default = "TLS12" ]
 
@@ -48,6 +73,9 @@ tls_server_config:
   # Go default cipher suites are used. Available cipher suites are documented
   # in the go documentation:
   # https://golang.org/pkg/crypto/tls/#pkg-constants
+  #
+  # Note that only the cipher returned by the following function are supported:
+  # https://pkg.go.dev/crypto/tls#CipherSuites
   [ cipher_suites:
     [ - <string> ] ]
 
@@ -81,7 +109,7 @@ http_server_config:
     # https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/X-Content-Type-Options
     [ X-Content-Type-Options: <string> ]
     # Set the X-XSS-Protection header to all responses.
-    # Unset if blank. Accepted value is nosniff.
+    # Unset if blank.
     # https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/X-XSS-Protection
     [ X-XSS-Protection: <string> ]
     # Set the Strict-Transport-Security header to HTTP responses.

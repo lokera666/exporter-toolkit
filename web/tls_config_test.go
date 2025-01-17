@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -31,9 +32,17 @@ import (
 	"time"
 )
 
+// Helpers for literal FlagConfig
+func OfBool(i bool) *bool {
+	return &i
+}
+func OfString(i string) *string {
+	return &i
+}
+
 var (
 	port       = getPort()
-	testlogger = &testLogger{}
+	testlogger = slog.New(slog.NewTextHandler(os.Stdout, nil))
 
 	ErrorMap = map[string]*regexp.Regexp{
 		"HTTP Response to HTTPS":       regexp.MustCompile(`server gave HTTP response to HTTPS client`),
@@ -43,8 +52,8 @@ var (
 		"Invalid ClientAuth":           regexp.MustCompile(`invalid ClientAuth`),
 		"TLS handshake":                regexp.MustCompile(`tls`),
 		"HTTP Request to HTTPS server": regexp.MustCompile(`HTTP`),
-		"Invalid CertPath":             regexp.MustCompile(`missing cert_file`),
-		"Invalid KeyPath":              regexp.MustCompile(`missing key_file`),
+		"Invalid Cert or CertPath":     regexp.MustCompile(`missing one of cert or cert_file`),
+		"Invalid Key or KeyPath":       regexp.MustCompile(`missing one of key or key_file`),
 		"ClientCA set without policy":  regexp.MustCompile(`Client CA's have been configured without a Client Auth Policy`),
 		"Bad password":                 regexp.MustCompile(`hashedSecret too short to be a bcrypted password`),
 		"Unauthorized":                 regexp.MustCompile(`Unauthorized`),
@@ -54,18 +63,17 @@ var (
 		"Unknown curve":                regexp.MustCompile(`unknown curve`),
 		"Unknown TLS version":          regexp.MustCompile(`unknown TLS version`),
 		"No HTTP2 cipher":              regexp.MustCompile(`TLSConfig.CipherSuites is missing an HTTP/2-required`),
-		"Incompatible TLS version":     regexp.MustCompile(`protocol version not supported`),
-		"Bad certificate":              regexp.MustCompile(`bad certificate`),
-		"Invalid value":                regexp.MustCompile(`invalid value for`),
-		"Invalid header":               regexp.MustCompile(`HTTP header ".*" can not be configured`),
+		// The first token is returned by Go <= 1.17 and the second token is returned by Go >= 1.18.
+		"Incompatible TLS version": regexp.MustCompile(`protocol version not supported|no supported versions satisfy MinVersion and MaxVersion`),
+		"Bad certificate":          regexp.MustCompile(`bad certificate`),
+		"Invalid value":            regexp.MustCompile(`invalid value for`),
+		"Invalid header":           regexp.MustCompile(`HTTP header ".*" can not be configured`),
+		"Invalid client cert":      regexp.MustCompile(`bad certificate`),
+		// Introduced in Go 1.21
+		"Certificate required": regexp.MustCompile(`certificate required`),
+		"Unknown CA":           regexp.MustCompile(`unknown certificate authority`),
 	}
 )
-
-type testLogger struct{}
-
-func (t *testLogger) Log(keyvals ...interface{}) error {
-	return nil
-}
 
 func getPort() string {
 	listener, err := net.Listen("tcp", ":0")
@@ -117,17 +125,27 @@ func TestYAMLFiles(t *testing.T) {
 		{
 			Name:           `invalid config yml (cert path empty)`,
 			YAMLConfigPath: "testdata/web_config_noAuth_certPath_empty.bad.yml",
-			ExpectedError:  ErrorMap["Invalid CertPath"],
+			ExpectedError:  ErrorMap["Invalid Cert or CertPath"],
+		},
+		{
+			Name:           `invalid config yml (cert empty)`,
+			YAMLConfigPath: "testdata/web_config_noAuth_cert_empty.bad.yml",
+			ExpectedError:  ErrorMap["Invalid Cert or CertPath"],
 		},
 		{
 			Name:           `invalid config yml (key path empty)`,
 			YAMLConfigPath: "testdata/web_config_noAuth_keyPath_empty.bad.yml",
-			ExpectedError:  ErrorMap["Invalid KeyPath"],
+			ExpectedError:  ErrorMap["Invalid Key or KeyPath"],
+		},
+		{
+			Name:           `invalid config yml (key empty)`,
+			YAMLConfigPath: "testdata/web_config_noAuth_key_empty.bad.yml",
+			ExpectedError:  ErrorMap["Invalid Key or KeyPath"],
 		},
 		{
 			Name:           `invalid config yml (cert path and key path empty)`,
 			YAMLConfigPath: "testdata/web_config_noAuth_certPath_keyPath_empty.bad.yml",
-			ExpectedError:  ErrorMap["Invalid CertPath"],
+			ExpectedError:  ErrorMap["Invalid Cert or CertPath"],
 		},
 		{
 			Name:           `invalid config yml (cert path invalid)`,
@@ -206,6 +224,12 @@ func TestServerBehaviour(t *testing.T) {
 			ExpectedError:  nil,
 		},
 		{
+			Name:           `valid tls config yml (cert and key inline) and tls client`,
+			YAMLConfigPath: "testdata/web_config_noAuth_tlsInline.good.yml",
+			UseTLSClient:   true,
+			ExpectedError:  nil,
+		},
+		{
 			Name:                `valid tls config yml with TLS 1.1 client`,
 			YAMLConfigPath:      "testdata/web_config_noAuth.good.yml",
 			UseTLSClient:        true,
@@ -237,8 +261,8 @@ func TestServerBehaviour(t *testing.T) {
 			YAMLConfigPath: "testdata/web_config_noAuth_someCiphers.good.yml",
 			UseTLSClient:   true,
 			CipherSuites: []uint16{
-				tls.TLS_RSA_WITH_AES_128_CBC_SHA,
 				tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+				tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
 			},
 			ActualCipher:  tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
 			ExpectedError: nil,
@@ -287,12 +311,6 @@ func TestServerBehaviour(t *testing.T) {
 			ExpectedError:  ErrorMap["No HTTP2 cipher"],
 		},
 		{
-			Name:           `valid tls config yml and tls client with RequireAnyClientCert`,
-			YAMLConfigPath: "testdata/tls_config_noAuth.requireanyclientcert.good.yml",
-			UseTLSClient:   true,
-			ExpectedError:  ErrorMap["Bad certificate"],
-		},
-		{
 			Name:           `valid headers config`,
 			YAMLConfigPath: "testdata/web_config_headers.good.yml",
 		},
@@ -307,7 +325,7 @@ func TestServerBehaviour(t *testing.T) {
 			ExpectedError:  ErrorMap["Invalid value"],
 		},
 		{
-			Name:           `HTTP header that can not be overriden`,
+			Name:           `HTTP header that can not be overridden`,
 			YAMLConfigPath: "testdata/web_config_headers_extra_header.bad.yml",
 			ExpectedError:  ErrorMap["Invalid header"],
 		},
@@ -319,10 +337,11 @@ func TestServerBehaviour(t *testing.T) {
 			ExpectedError:     nil,
 		},
 		{
-			Name:           `valid tls config yml and tls client with RequireAndVerifyClientCert`,
-			YAMLConfigPath: "testdata/tls_config_noAuth.requireandverifyclientcert.good.yml",
-			UseTLSClient:   true,
-			ExpectedError:  ErrorMap["Bad certificate"],
+			Name:              `valid tls config yml (cert from file, key inline) and tls client with RequireAnyClientCert (present certificate)`,
+			YAMLConfigPath:    "testdata/tls_config_noAuth.requireanyclientcert.good.yml",
+			UseTLSClient:      true,
+			ClientCertificate: "client_selfsigned",
+			ExpectedError:     nil,
 		},
 		{
 			Name:              `valid tls config yml and tls client with RequireAndVerifyClientCert (present certificate)`,
@@ -332,11 +351,18 @@ func TestServerBehaviour(t *testing.T) {
 			ExpectedError:     nil,
 		},
 		{
-			Name:              `valid tls config yml and tls client with RequireAndVerifyClientCert (present wrong certificate)`,
-			YAMLConfigPath:    "testdata/tls_config_noAuth.requireandverifyclientcert.good.yml",
+			Name:              `valid tls config yml and tls client with VerifyPeerCertificate (present good SAN DNS entry)`,
+			YAMLConfigPath:    "testdata/web_config_auth_client_san.good.yaml",
 			UseTLSClient:      true,
 			ClientCertificate: "client2_selfsigned",
-			ExpectedError:     ErrorMap["Bad certificate"],
+			ExpectedError:     nil,
+		},
+		{
+			Name:              `valid tls config yml and tls client with VerifyPeerCertificate (present invalid SAN DNS entries)`,
+			YAMLConfigPath:    "testdata/web_config_auth_client_san.bad.yaml",
+			UseTLSClient:      true,
+			ClientCertificate: "client2_selfsigned",
+			ExpectedError:     ErrorMap["Invalid client cert"],
 		},
 	}
 	for _, testInputs := range testTables {
@@ -377,7 +403,12 @@ func TestConfigReloading(t *testing.T) {
 				recordConnectionError(errors.New("Panic starting server"))
 			}
 		}()
-		err := Listen(server, badYAMLPath, testlogger)
+		flagsBadYAMLPath := FlagConfig{
+			WebListenAddresses: &([]string{port}),
+			WebSystemdSocket:   OfBool(false),
+			WebConfigFile:      OfString(badYAMLPath),
+		}
+		err := Listen(server, &flagsBadYAMLPath, testlogger)
 		recordConnectionError(err)
 	}()
 
@@ -435,7 +466,6 @@ func (test *TestInputs) Test(t *testing.T) {
 	}()
 
 	server := &http.Server{
-		Addr: port,
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Write([]byte("Hello World!"))
 		}),
@@ -447,7 +477,12 @@ func (test *TestInputs) Test(t *testing.T) {
 				recordConnectionError(errors.New("Panic starting server"))
 			}
 		}()
-		err := ListenAndServe(server, test.YAMLConfigPath, testlogger)
+		flags := FlagConfig{
+			WebListenAddresses: &([]string{port}),
+			WebSystemdSocket:   OfBool(false),
+			WebConfigFile:      &test.YAMLConfigPath,
+		}
+		err := ListenAndServe(server, &flags, testlogger)
 		recordConnectionError(err)
 	}()
 

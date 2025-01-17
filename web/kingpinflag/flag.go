@@ -13,14 +13,39 @@
 package kingpinflag
 
 import (
-	"gopkg.in/alecthomas/kingpin.v2"
+	"runtime"
+
+	"github.com/alecthomas/kingpin/v2"
+	"github.com/prometheus/exporter-toolkit/web"
 )
 
-// AddFlags adds the flags used by this package to the Kingpin application.
-// To use the default Kingpin application, call AddFlags(kingpin.CommandLine)
-func AddFlags(a *kingpin.Application) *string {
-	return a.Flag(
-		"web.config.file",
-		"[EXPERIMENTAL] Path to configuration file that can enable TLS or authentication.",
-	).Default("").String()
+type flagGroup interface {
+	Flag(string, string) *kingpin.FlagClause
+}
+
+var _ flagGroup = &kingpin.Application{}
+
+// AddFlags adds the flags used by this package to the Kingpin application or CmdClause.
+// To use the default Kingpin application, call
+// AddFlags(kingpin.CommandLine, ":portNum") where portNum is the default port.
+func AddFlags(a flagGroup, defaultAddress string) *web.FlagConfig {
+	systemdSocket := func() *bool { b := false; return &b }() // Socket activation only available on Linux
+	if runtime.GOOS == "linux" {
+		systemdSocket = a.Flag(
+			"web.systemd-socket",
+			"Use systemd socket activation listeners instead of port listeners (Linux only).",
+		).Bool()
+	}
+	flags := web.FlagConfig{
+		WebListenAddresses: a.Flag(
+			"web.listen-address",
+			"Addresses on which to expose metrics and web interface. Repeatable for multiple addresses. Examples: `:9100` or `[::1]:9100` for http, `vsock://:9100` for vsock",
+		).Default(defaultAddress).HintOptions(defaultAddress).Strings(),
+		WebSystemdSocket: systemdSocket,
+		WebConfigFile: a.Flag(
+			"web.config.file",
+			"Path to configuration file that can enable TLS or authentication. See: https://github.com/prometheus/exporter-toolkit/blob/master/docs/web-configuration.md",
+		).Default("").String(),
+	}
+	return &flags
 }

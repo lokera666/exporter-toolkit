@@ -1,3 +1,48 @@
+## 0.13.0 / 2024-09-09
+
+* [CHANGE] Switch logging library to slog #240
+
+## 0.12.0 / 2024-09-03
+
+* [FEATURE] Add pprof links to landing page #196
+* [FEATURE] Support listen on vsock #220
+* [ENHANCEMENT] Add hints for bash completion #190
+* [ENHANCEMENT] Support kingpin.CmdClause as argument #238
+* [BUGFIX] Don't swollow listen errors #232
+
+## 0.11.0 / 2023-12-09
+
+* [FEATURE] Allow passing of TLS certificates inline #158
+
+## 0.10.0 / 2023-05-01
+
+* [FEATURE] Client TLS: Add option to require a specific Subject Alternate Names #126
+* [FEATURE] Add a POST form to the landing page #144
+* [FEATURE] Add generic customization to landing page #146
+* [ENHANCEMENT] Add a Content-Type header to the landing page #142
+* [BUGFIX] Fix Nil pointer references for WebSystemdSocket #127
+
+## 0.9.1 / 2023-03-08
+
+* [BUGFIX] Landing page: Use HTML5 and Semantic HTML tags #138
+* [BUGFIX] test: use port polling to wait for server to start #139
+* [BUGFIX] Update kingpin library to fix 32-bit builds #140
+
+## 0.9.0 / 2023-03-06
+
+* [CHANGE] Update gopkg.in/alecthomas/kingpin.v2 to github.com/alecthomas/kingpin/v2 #133
+* [FEATURE] Exporter Landing page #51
+
+## 0.8.1 / 2022-10-21
+
+* [BUGFIX] Fix systemd activation flag when using a custom kingpin app. #118
+
+## 0.8.0 / 2022-10-10
+
+* [CHANGE] Change some structs suffix from `Struct` to `Config`. #114
+* [FEATURE] Add multiple listeners and systemd socket support. #95
+* [FEATURE] Allow TLS parameters to be set in code. #110
+
 ## 0.7.1 / 2021-12-02
 
 * [BUGFIX] Effectively enable HTTP/2 support. #72
